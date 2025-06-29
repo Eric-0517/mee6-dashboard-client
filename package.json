@@ -10,6 +10,7 @@
     "express": "^5.1.0",
     "moment": "^2.30.1",
     "mongoose": "^8.15.1",
+    "node-fetch": "^3.3.2",
     "play-dl": "^1.9.7",
     "puppeteer": "^24.10.2",
     "ytdl-core": "^4.11.5"

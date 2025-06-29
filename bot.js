@@ -128,3 +128,12 @@ process.on('uncaughtException', err => {
 
 // === 登入 Bot ===
 client.login(process.env.DISCORD_TOKEN);
+
+// === 自我 Ping 保活機制 ===
+const fetch = require('node-fetch');
+
+setInterval(() => {
+  fetch(`http://localhost:${PORT}`).catch(err => {
+    console.log('⚠️ 自我 Ping 失敗：', err.message);
+  });
+}, 1000 * 60 * 5); // 每 5 分鐘 ping 一次
