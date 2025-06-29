@@ -3,8 +3,8 @@ const axios = require('axios');
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('查詢歷史戰績')
-    .setDescription('查詢玩家最近 10 場對戰記錄')
+    .setName('查詢角色偏好')
+    .setDescription('查詢玩家常用英雄')
     .addStringOption(option =>
       option.setName('uid')
         .setDescription('玩家 UID')
@@ -26,18 +26,18 @@ module.exports = {
     await interaction.deferReply();
 
     try {
-      const res = await axios.get('https://aovweb.azurewebsites.net/api/Player/GetBattleList', {
+      const res = await axios.get('https://aovweb.azurewebsites.net/api/Player/GetPlayerHeroInfo', {
         params: { uid, dwLogicWorldId }
       });
 
-      const battles = res.data.data.slice(0, 5)
-        .map((b, i) => `${i + 1}. ${b.heroName} - ${b.battleResult}（${b.kda}）`)
+      const topHeroes = res.data.data.slice(0, 5)
+        .map(h => `${h.heroName}：${h.matchCount} 場，勝率 ${h.winRate}%`)
         .join('\n');
 
-      await interaction.editReply(`📜 最近戰績（前 5 場）：\n${battles}`);
+      await interaction.editReply(`👑 最常用英雄（前 5）：\n${topHeroes}`);
     } catch (err) {
       console.error(err);
-      await interaction.editReply('❌ 查詢失敗，請確認 UID 與伺服器代碼。');
+      await interaction.editReply('❌ 查詢失敗，請確認資料是否正確。');
     }
   }
 };

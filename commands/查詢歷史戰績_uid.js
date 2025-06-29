@@ -3,7 +3,7 @@ const axios = require('axios');
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('查詢戰績_uid')
+    .setName('查詢歷史戰績_uid')
     .setDescription('使用 UID 查詢《傳說對決》戰績')
     .addStringOption(option =>
       option.setName('uid')
