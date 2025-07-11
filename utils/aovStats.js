@@ -2,10 +2,9 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 
 const BASE_URL = 'https://aovweb.azurewebsites.net';
-
 const headers = {
   'User-Agent': 'Mozilla/5.0',
-  'Accept-Language': 'zh-TW'
+  'Accept-Language': 'zh-TW',
 };
 
 // ✅ 取得歷史戰績列表（透過 UID + serverId）
@@ -18,12 +17,27 @@ async function fetchMatchHistoryListByUID(uid, serverId) {
 
     $('.match-entry').each((i, el) => {
       const id = $(el).find('.match-id').text().trim();
+
       const heroImg = $(el).find('img').attr('src') || '';
       const heroIdMatch = heroImg.match(/HeroHeadPath\/(\d+)head\.jpg/);
       const heroId = heroIdMatch ? heroIdMatch[1] : null;
 
+      const kdaText = $(el).find('.match-kda').text().trim(); // e.g. "8 / 2 / 5"
+      const result = $(el).find('.match-result').text().trim(); // 勝利/失敗
+      const heroName = $(el).find('.match-hero').text().trim(); // 英雄名稱
+      const mode = $(el).find('.match-mode').text().trim();
+      const time = $(el).find('.match-time').text().trim();
+
       if (id) {
-        matchList.push({ id, heroId });
+        matchList.push({
+          id,
+          heroId,
+          heroName,
+          result,
+          kda: kdaText,
+          mode,
+          time,
+        });
       }
     });
 
@@ -76,7 +90,11 @@ async function fetchMatchDetail(matchId) {
     const heroIdMatch = heroImg.match(/HeroHeadPath\/(\d+)head\.jpg/);
     const heroId = heroIdMatch ? heroIdMatch[1] : null;
 
-    const rank = $('td').filter((_, el) => $(el).text().includes('(')).first().text().trim();
+    const rank = $('td')
+      .filter((_, el) => $(el).text().includes('('))
+      .first()
+      .text()
+      .trim();
 
     return {
       id: matchId,
@@ -94,5 +112,5 @@ async function fetchMatchDetail(matchId) {
 
 module.exports = {
   fetchMatchHistoryListByUID,
-  fetchMatchDetail
+  fetchMatchDetail,
 };
