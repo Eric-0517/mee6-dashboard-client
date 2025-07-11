@@ -78,8 +78,6 @@ client.once(Events.ClientReady, async () => {
 client.on(Events.InteractionCreate, async interaction => {
   try {
     if (interaction.isModalSubmit()) {
-      // 你現有的 Modal 處理邏輯放這
-      // 例如 guessNumberModal_ 處理
       if (interaction.customId.startsWith('guessNumberModal_')) {
         const answer = parseInt(interaction.customId.split('_')[1], 10);
         const guess = parseInt(interaction.fields.getTextInputValue('guessInput'), 10);
@@ -105,23 +103,23 @@ client.on(Events.InteractionCreate, async interaction => {
       const command = client.commands.get(interaction.commandName);
       if (!command) return;
 
-      if (!interaction.deferred && !interaction.replied) {
-        await interaction.deferReply();
-      }
-
-      await command.execute(interaction);
+      await command.execute(interaction); // 👈 不再預先 deferReply，交給每個指令自己決定
     }
   } catch (err) {
     console.error('❌ 指令或互動錯誤：', err);
-    if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({ content: '❌ 執行指令時發生錯誤，請稍後再試！', ephemeral: true });
-    } else {
-      await interaction.editReply('❌ 執行指令時發生錯誤，請稍後再試！');
+    try {
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: '❌ 執行指令時發生錯誤，請稍後再試！', ephemeral: true });
+      } else {
+        await interaction.editReply('❌ 執行指令時發生錯誤，請稍後再試！');
+      }
+    } catch (e) {
+      console.error('⚠️ 回覆錯誤時也出錯:', e);
     }
   }
 });
 
-// === 全域錯誤捕獲 ===
+// === 全域錯誤捕捉 ===
 process.on('uncaughtException', err => {
   console.error('🔥 未捕捉例外錯誤:', err);
 });
@@ -131,7 +129,6 @@ client.login(process.env.DISCORD_TOKEN);
 
 // === 自我 Ping 保活機制 ===
 const fetch = require('node-fetch');
-
 setInterval(() => {
   fetch(`http://localhost:${PORT}`).catch(err => {
     console.log('⚠️ 自我 Ping 失敗：', err.message);
