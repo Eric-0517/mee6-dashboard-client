@@ -4,8 +4,8 @@ const cheerio = require('cheerio');
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('查詢排位排行榜')
-    .setDescription('查詢傳說對決排位排行榜（前 10 名）'),
+    .setName('獲取排位排行榜')
+    .setDescription('查詢傳說對決排位排行榜（前 100 名）'),
 
   async execute(interaction) {
     await interaction.deferReply();
@@ -18,7 +18,7 @@ module.exports = {
       const topPlayers = [];
 
       $('table tbody tr').each((i, el) => {
-        if (i >= 10) return; // 只取前 10 名
+        if (i >= 100) return; // 只取前 100 名
 
         const rank = $(el).find('td').eq(0).text().trim();
         const playerName = $(el).find('td').eq(1).text().trim();
@@ -36,7 +36,7 @@ module.exports = {
       }
 
       const embed = new EmbedBuilder()
-        .setTitle('🏆 傳說對決 排位排行榜 TOP 10')
+        .setTitle('🏆 傳說對決 排位排行榜 TOP 100')
         .setColor('#FFD700')
         .setTimestamp();
 
