@@ -3,99 +3,101 @@ const {
   EmbedBuilder,
   ActionRowBuilder,
   StringSelectMenuBuilder,
+  ComponentType,
 } = require('discord.js');
-const { fetchMatchHistoryList, fetchMatchDetail } = require('../utils/aovStats');
+const {
+  fetchMatchHistoryListByName,
+  fetchMatchDetail,
+} = require('../utils/aovStats');
 
-const matchCache = new Map(); // 使用記憶體暫存查詢資料
+const matchCache = new Map(); // 儲存場次快取給互動選單用
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('查詢歷史戰績')
-    .setDescription('查詢傳說對決的歷史戰績（透過玩家名稱）')
+    .setDescription('輸入玩家名稱查詢傳說對決歷史戰績')
     .addStringOption(option =>
-      option.setName('玩家名稱')
-        .setDescription('輸入傳說對決玩家名稱')
+      option
+        .setName('玩家名稱')
+        .setDescription('請輸入玩家的遊戲名稱')
         .setRequired(true)
     ),
 
   async execute(interaction) {
     const playerName = interaction.options.getString('玩家名稱');
-    await interaction.deferReply();
+    await interaction.deferReply(); // 延遲回應，避免逾時
 
     try {
-      const matchList = await fetchMatchHistoryList(playerName);
+      const matchList = await fetchMatchHistoryListByName(playerName);
       if (!matchList || matchList.length === 0) {
-        return interaction.editReply(`❌ 找不到玩家 ${playerName} 的戰績資料。`);
+        return await interaction.editReply(`❌ 找不到玩家 **${playerName}** 的對戰資料。`);
       }
 
-      // 暫存資料：以 user.id 為 key，儲存查詢對應的所有 matchList
-      matchCache.set(interaction.user.id, { matchList, playerName });
+      matchCache.set(interaction.user.id, { matchList });
 
-      const matchDetail = await fetchMatchDetail(matchList[0].id);
-      const embed = createMatchEmbed(matchDetail, 1, matchList.length);
+      const first = await fetchMatchDetail(matchList[0].id);
+      const embed = createMatchEmbed(first, matchList[0], 1, matchList.length);
 
-      const menu = new StringSelectMenuBuilder()
-        .setCustomId('match_select')
-        .setPlaceholder('選擇要查看的場次')
+      const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('select_match')
+        .setPlaceholder('請選擇要查看的場次')
         .addOptions(
-          matchList.map((match, index) => ({
-            label: `第 ${index + 1} 場 - ${match.heroName}`,
-            description: `${match.result} | ${match.kills}/${match.deaths}/${match.assists}`,
-            value: String(index),
+          matchList.map((m, i) => ({
+            label: `第 ${i + 1} 場 - ${m.heroName || '未知英雄'}`,
+            description: `${m.result} | ${m.kda} | ${m.mode}`,
+            value: `${i}`,
           }))
         );
 
-      const row = new ActionRowBuilder().addComponents(menu);
+      const row = new ActionRowBuilder().addComponents(selectMenu);
 
-      await interaction.editReply({ embeds: [embed], components: [row] });
+      await interaction.editReply({
+        content: `🎮 玩家 **${playerName}** 的最近對戰紀錄：`,
+        embeds: [embed],
+        components: [row],
+      });
     } catch (err) {
-      console.error(err);
-      await interaction.editReply('❌ 查詢時發生錯誤，請稍後再試。');
+      console.error('❌ 查詢歷史戰績錯誤:', err);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: '❌ 發生錯誤，請稍後再試。', ephemeral: true });
+      } else {
+        await interaction.followUp({ content: '❌ 發生錯誤，請稍後再試。', ephemeral: true });
+      }
     }
   },
-
-  // 提供外部存取快取（給 interactionCreate 用）
-  cache: matchCache,
 };
 
-// 建立顯示 embed 的函式
-function createMatchEmbed(data, index, total) {
-  const {
-    heroName,
-    heroId,
-    result,
-    mode,
-    duration,
-    kills,
-    deaths,
-    assists,
-    MVP,
-    damage,
-    tank,
-    logicWorldId,
-    time,
-    rankScore,
-    extraRankScore,
-    lane,
-    credit,
-  } = data;
+// 🔧 建立嵌入訊息格式
+function createMatchEmbed(detail, summary, index, total) {
+  const heroIcon = detail.heroId
+    ? `https://dl.ops.kgtw.garenanow.com/CHT/HeroHeadPath/${detail.heroId}head.jpg`
+    : null;
 
   const embed = new EmbedBuilder()
-    .setColor(result === '勝利' ? 0x00d26a : 0xff4e4e)
-    .setTitle(`${result} | ${heroName} | ${kills}/${deaths}/${assists}`)
-    .setThumbnail(`https://dl.ops.kgtw.garenanow.com/CHT/HeroHeadPath/${heroId}head.jpg`)
+    .setTitle(`第 ${index} 場戰績 - ${summary.heroName || '未知英雄'}`)
+    .setDescription(`🏆 結果：**${summary.result}**\n🎮 模式：${summary.mode}\n🕒 時間：${summary.time}\n📊 KDA：${summary.kda}`)
     .addFields(
-      { name: '模式', value: mode, inline: true },
-      { name: '時間', value: time, inline: true },
-      { name: '對戰時長', value: duration, inline: true },
-      { name: 'MVP', value: MVP, inline: true },
-      { name: '輸出傷害', value: damage, inline: true },
-      { name: '承受傷害', value: tank, inline: true },
-      { name: '分路 (系統)', value: lane || '未知', inline: true },
-      { name: '排位分', value: `${rankScore} (+${extraRankScore})`, inline: true },
-      { name: '信譽分', value: String(credit), inline: true },
+      {
+        name: '🔵 我方隊友',
+        value: detail.teammates.join('\n') || '無資料',
+        inline: true,
+      },
+      {
+        name: '🔴 敵方隊伍',
+        value: detail.opponents.join('\n') || '無資料',
+        inline: true,
+      },
+      {
+        name: '📈 B50 測試欄位',
+        value:
+          Object.entries(detail.stats)
+            .map(([k, v]) => `${k}：${v}`)
+            .join('\n') || '無',
+      }
     )
-    .setFooter({ text: `第 ${index} 場 / 共 ${total} 場` });
+    .setFooter({ text: `第 ${index} / ${total} 場戰績` })
+    .setColor(0x4ba3f1);
 
+  if (heroIcon) embed.setThumbnail(heroIcon);
   return embed;
 }

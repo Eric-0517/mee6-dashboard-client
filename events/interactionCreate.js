@@ -4,14 +4,14 @@ const {
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuBuilder,
-  PermissionsBitField,
 } = require('discord.js');
-
 const TestResult = require('../models/TestResult');
-const matchCommand = require('../commands/查詢歷史戰績');
 const { fetchMatchDetail } = require('../utils/aovStats');
 
-// ==================== 🧠 心理測驗題目與邏輯 ==================== //
+const matchCache = new Map(); // 用於歷史戰績選單切換
+const sessions = new Map();   // 心理測驗會話
+
+// 心理測驗題庫
 const questions = [
   {
     question: 'Q1：你喜歡哪種天氣？',
@@ -27,195 +27,219 @@ const questions = [
   },
 ];
 
-const createButtons = (questionIndex) => {
+// 建立心理測驗按鈕
+function createButtons(index) {
   const row = new ActionRowBuilder();
-  questions[questionIndex].options.forEach((opt, idx) => {
+  questions[index].options.forEach((opt, i) => {
     row.addComponents(
       new ButtonBuilder()
-        .setCustomId(`quiz_answer_${questionIndex}_${idx}`)
+        .setCustomId(`quiz_answer_${index}_${i}`)
         .setLabel(opt)
         .setStyle(ButtonStyle.Primary)
     );
   });
 
-  const controlRow = new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId('quiz_prev')
-        .setLabel('⬅️ 上一步')
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(questionIndex === 0),
-      new ButtonBuilder()
-        .setCustomId('quiz_restart')
-        .setLabel('🔄 重新開始')
-        .setStyle(ButtonStyle.Danger)
-    );
+  const controlRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('quiz_prev')
+      .setLabel('⬅️ 上一步')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(index === 0),
+    new ButtonBuilder()
+      .setCustomId('quiz_restart')
+      .setLabel('🔄 重新開始')
+      .setStyle(ButtonStyle.Danger)
+  );
 
   return [row, controlRow];
-};
+}
 
-const quizSessions = new Map();
+// 建立嵌入戰績內容
+function createMatchEmbed(detail, summary, index, total) {
+  const heroIcon = detail.heroId
+    ? `https://dl.ops.kgtw.garenanow.com/CHT/HeroHeadPath/${detail.heroId}head.jpg`
+    : null;
 
+  const embed = {
+    title: `第 ${index} 場戰績 - ${summary.heroName || '未知英雄'}`,
+    description: `🏆 結果：**${summary.result}**\n🎮 模式：${summary.mode}\n🕒 時間：${summary.time}\n📊 KDA：${summary.kda}`,
+    fields: [
+      {
+        name: '🔵 我方隊友',
+        value: detail.teammates.join('\n') || '無資料',
+        inline: true,
+      },
+      {
+        name: '🔴 敵方隊伍',
+        value: detail.opponents.join('\n') || '無資料',
+        inline: true,
+      },
+      {
+        name: '📈 B50 測試欄位',
+        value:
+          Object.entries(detail.stats)
+            .map(([k, v]) => `${k}：${v}`)
+            .join('\n') || '無',
+      },
+    ],
+    footer: {
+      text: `第 ${index} / ${total} 場戰績`,
+    },
+    color: 0x4ba3f1,
+  };
+
+  if (heroIcon) embed.thumbnail = { url: heroIcon };
+  return embed;
+}
+
+// 🔁 建立心理測驗會話
 function createSession(userId) {
-  if (quizSessions.has(userId)) clearTimeout(quizSessions.get(userId).timeout);
-  const timeout = setTimeout(() => quizSessions.delete(userId), 10 * 60 * 1000);
-  quizSessions.set(userId, {
+  if (sessions.has(userId)) clearTimeout(sessions.get(userId).timeout);
+  const timeout = setTimeout(() => sessions.delete(userId), 10 * 60 * 1000);
+  sessions.set(userId, {
     current: 0,
     answers: [],
     timeout,
   });
 }
 
+// 🔁 重新整理 timeout
 function refreshSession(userId) {
-  const session = quizSessions.get(userId);
+  const session = sessions.get(userId);
   if (session) {
     clearTimeout(session.timeout);
-    session.timeout = setTimeout(() => quizSessions.delete(userId), 10 * 60 * 1000);
+    session.timeout = setTimeout(() => sessions.delete(userId), 10 * 60 * 1000);
   }
 }
-
-// ==================== 🎯 主互動監聽器 ==================== //
 
 module.exports = {
   name: Events.InteractionCreate,
   async execute(interaction) {
     try {
-      const userId = interaction.user.id;
-      const customId = interaction.customId;
-
-      // ✅ Slash 指令處理區
+      // ✅ Slash 指令
       if (interaction.isChatInputCommand()) {
         if (interaction.commandName === '心理測驗') {
+          const userId = interaction.user.id;
           createSession(userId);
+
           const q = questions[0].question;
           const components = createButtons(0);
 
-          await interaction.reply({
+          return interaction.reply({
             content: `🧠 心理測驗開始！\n\n${q}`,
             components,
             ephemeral: true,
           });
         }
-        return;
+
+        // 👉 其他指令在各自指令檔案內處理（查詢戰績...等）
       }
 
-      // ✅ 選單互動：查詢歷史戰績
-      if (interaction.isStringSelectMenu() && customId === 'match_select') {
-        const cache = matchCommand.cache.get(userId);
-        if (!cache) {
-          return interaction.reply({ content: '⚠️ 請先使用 /查詢歷史戰績 查詢資料。', ephemeral: true });
-        }
+      // ✅ 按鈕互動（心理測驗）
+      else if (interaction.isButton()) {
+        const userId = interaction.user.id;
+        const customId = interaction.customId;
 
-        const index = parseInt(interaction.values[0]);
-        const matchInfo = cache.matchList[index];
-
-        await interaction.deferUpdate();
-        const detail = await fetchMatchDetail(matchInfo.id);
-        const embed = matchCommand.createMatchEmbed(detail, index + 1, cache.matchList.length);
-        await interaction.editReply({ embeds: [embed] });
-        return;
-      }
-
-      // ✅ 按鈕互動處理區（心理測驗與其他按鈕）
-      if (interaction.isButton()) {
-        // 👉 更新通知按鈕
         if (customId === 'confirm_update') {
-          await interaction.reply({
-            content: '✅ 你已成功執行更新，歡迎體驗新功能！',
+          return interaction.reply({
+            content: '✅ 更新成功，歡迎體驗新功能！',
             ephemeral: true,
           });
-          return;
         }
 
-        // 👉 心理測驗按鈕
-        const session = quizSessions.get(userId);
-        if (customId.startsWith('quiz_')) {
-          if (!session) {
-            await interaction.reply({
-              content: '❌ 測驗會話已過期，請重新輸入 `/心理測驗` 開始。',
-              ephemeral: true,
-            });
-            return;
-          }
+        const session = sessions.get(userId);
+        if (!session) {
+          return interaction.reply({
+            content: '❌ 測驗會話已過期，請重新輸入 `/心理測驗`。',
+            ephemeral: true,
+          });
+        }
 
-          refreshSession(userId);
+        refreshSession(userId);
 
-          // 回答選項
-          if (customId.startsWith('quiz_answer_')) {
-            const [_, qIndex, optIndex] = customId.split('_').map(Number);
-            session.answers[qIndex] = questions[qIndex].options[optIndex];
-            session.current = qIndex + 1;
+        if (customId.startsWith('quiz_answer_')) {
+          const [_, qIndex, optIndex] = customId.split('_').map(Number);
+          session.answers[qIndex] = questions[qIndex].options[optIndex];
+          session.current = qIndex + 1;
 
-            // ➤ 結束測驗
-            if (session.current >= questions.length) {
-              try {
-                await TestResult.create({
-                  userId,
-                  answers: session.answers,
-                  timestamp: new Date(),
-                });
-              } catch (err) {
-                console.error('❌ MongoDB 儲存失敗:', err);
-              }
-
-              await interaction.update({
-                content: `✅ 測驗完成！你的答案如下：\n${session.answers.map((a, i) => `Q${i + 1}: ${a}`).join('\n')}`,
-                components: [],
+          if (session.current >= questions.length) {
+            try {
+              await TestResult.create({
+                userId,
+                answers: session.answers,
+                timestamp: new Date(),
               });
-              clearTimeout(session.timeout);
-              quizSessions.delete(userId);
-              return;
+            } catch (e) {
+              console.error('❌ MongoDB 儲存失敗:', e);
             }
 
-            const nextQ = questions[session.current].question;
+            sessions.delete(userId);
+            return interaction.update({
+              content: `✅ 測驗完成！你的答案如下：\n${session.answers.map((a, i) => `Q${i + 1}: ${a}`).join('\n')}`,
+              components: [],
+            });
+          }
+
+          const nextQ = questions[session.current].question;
+          const components = createButtons(session.current);
+          return interaction.update({ content: nextQ, components });
+        }
+
+        // 👉 上一步
+        if (customId === 'quiz_prev') {
+          if (session.current > 0) {
+            session.current--;
+            const prevQ = questions[session.current].question;
             const components = createButtons(session.current);
-            await interaction.update({
-              content: `${nextQ}`,
-              components,
-            });
-            return;
+            return interaction.update({ content: prevQ, components });
+          } else {
+            return interaction.deferUpdate();
           }
-
-          // 上一步
-          if (customId === 'quiz_prev') {
-            if (session.current > 0) {
-              session.current--;
-              const prevQ = questions[session.current].question;
-              const components = createButtons(session.current);
-              await interaction.update({
-                content: `${prevQ}`,
-                components,
-              });
-            } else {
-              await interaction.deferUpdate();
-            }
-            return;
-          }
-
-          // 重新開始
-          if (customId === 'quiz_restart') {
-            createSession(userId);
-            const q = questions[0].question;
-            const components = createButtons(0);
-            await interaction.update({
-              content: `🔄 已重新開始心理測驗\n\n${q}`,
-              components,
-            });
-            return;
-          }
-
-          // 其他 quiz_ 未知操作
-          return interaction.reply({ content: '未知心理測驗操作。', ephemeral: true });
         }
 
-        // 其他未知按鈕
-        return interaction.reply({ content: '未知按鈕操作。', ephemeral: true });
+        // 👉 重新開始
+        if (customId === 'quiz_restart') {
+          createSession(userId);
+          const q = questions[0].question;
+          const components = createButtons(0);
+          return interaction.update({ content: `🔄 已重新開始心理測驗\n\n${q}`, components });
+        }
+
+        // 👉 未知按鈕
+        return interaction.reply({ content: '❌ 未知按鈕操作。', ephemeral: true });
+      }
+
+      // ✅ 選單互動（戰績場次切換）
+      else if (interaction.isStringSelectMenu()) {
+        const { customId, values, user } = interaction;
+        if (customId === 'select_match') {
+          const index = parseInt(values[0]);
+          const cache = matchCache.get(user.id);
+          if (!cache || !cache.matchList[index]) {
+            return interaction.reply({ content: '❌ 資料已過期，請重新查詢。', ephemeral: true });
+          }
+
+          const summary = cache.matchList[index];
+          const detail = await fetchMatchDetail(summary.id);
+          const embed = createMatchEmbed(detail, summary, index + 1, cache.matchList.length);
+
+          return interaction.update({
+            content: `🎮 已切換至第 ${index + 1} 場戰績：`,
+            embeds: [embed],
+          });
+        }
       }
     } catch (err) {
       console.error('❌ interactionCreate 發生錯誤:', err);
+
       if (!interaction.replied && !interaction.deferred) {
         await interaction.reply({
           content: '❌ 發生錯誤，請稍後再試。',
+          ephemeral: true,
+        });
+      } else {
+        await interaction.followUp({
+          content: '⚠️ 發生錯誤，請稍後再試。',
           ephemeral: true,
         });
       }

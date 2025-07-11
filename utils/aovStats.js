@@ -2,84 +2,121 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 
 const BASE_URL = 'https://aovweb.azurewebsites.net';
+
 const headers = {
   'User-Agent': 'Mozilla/5.0',
   'Accept-Language': 'zh-TW',
 };
 
-// ✅ 取得歷史戰績列表（透過 UID + serverId）
+// ✅ 透過 UID + 伺服器 ID 取得歷史戰績列表
 async function fetchMatchHistoryListByUID(uid, serverId) {
   const url = `${BASE_URL}/FightHistory/View?searchType=UID&keyword=${uid}&dwLogicWorldId=${serverId}`;
-  return await parseMatchList(url);
-}
-
-// ✅ 取得歷史戰績列表（透過玩家名稱）
-async function fetchMatchHistoryListByName(playerName) {
-  const url = `${BASE_URL}/FightHistory/View?searchType=playerName&keyword=${encodeURIComponent(playerName)}`;
-  return await parseMatchList(url);
-}
-
-// ✅ 公用的 match list 解析器（避免重複）
-async function parseMatchList(url) {
   try {
     const res = await axios.get(url, { headers });
     const $ = cheerio.load(res.data);
     const matchList = [];
 
-    $('.match-entry').each((i, el) => {
+    $('.match-entry').each((_, el) => {
       const id = $(el).find('.match-id').text().trim();
-
+      const heroName = $(el).find('.hero-name').text().trim() || '未知英雄';
+      const mode = $(el).find('.game-mode').text().trim() || '未知模式';
+      const time = $(el).find('.match-time').text().trim() || '未知時間';
+      const result = $(el).find('.match-result').text().trim() || '未知結果';
+      const kda = $(el).find('.kda').text().trim() || '0/0/0';
       const heroImg = $(el).find('img').attr('src') || '';
       const heroIdMatch = heroImg.match(/HeroHeadPath\/(\d+)head\.jpg/);
       const heroId = heroIdMatch ? heroIdMatch[1] : null;
 
-      const heroName = $(el).find('.match-hero').text().trim();
-      const result = $(el).find('.match-result').text().trim();
-      const kda = $(el).find('.match-kda').text().trim();
-      const mode = $(el).find('.match-mode').text().trim();
-      const time = $(el).find('.match-time').text().trim();
-
       if (id) {
-        matchList.push({ id, heroId, heroName, result, kda, mode, time });
+        matchList.push({
+          id,
+          heroId,
+          heroName,
+          mode,
+          time,
+          result,
+          kda,
+        });
       }
     });
 
     return matchList;
   } catch (err) {
-    console.error('❌ parseMatchList 失敗:', err.message);
+    console.error('❌ fetchMatchHistoryListByUID 失敗:', err.message);
     return [];
   }
 }
 
-// ✅ 單場詳細戰績
+// ✅ 透過玩家名稱查詢歷史戰績列表（類似 fetchMatchHistoryListByUID，但改用玩家名稱搜尋）
+async function fetchMatchHistoryListByName(playerName) {
+  const url = `${BASE_URL}/FightHistory/View?searchType=playerName&keyword=${encodeURIComponent(playerName)}`;
+  try {
+    const res = await axios.get(url, { headers });
+    const $ = cheerio.load(res.data);
+    const matchList = [];
+
+    $('.match-entry').each((_, el) => {
+      const id = $(el).find('.match-id').text().trim();
+      const heroName = $(el).find('.hero-name').text().trim() || '未知英雄';
+      const mode = $(el).find('.game-mode').text().trim() || '未知模式';
+      const time = $(el).find('.match-time').text().trim() || '未知時間';
+      const result = $(el).find('.match-result').text().trim() || '未知結果';
+      const kda = $(el).find('.kda').text().trim() || '0/0/0';
+      const heroImg = $(el).find('img').attr('src') || '';
+      const heroIdMatch = heroImg.match(/HeroHeadPath\/(\d+)head\.jpg/);
+      const heroId = heroIdMatch ? heroIdMatch[1] : null;
+
+      if (id) {
+        matchList.push({
+          id,
+          heroId,
+          heroName,
+          mode,
+          time,
+          result,
+          kda,
+        });
+      }
+    });
+
+    return matchList;
+  } catch (err) {
+    console.error('❌ fetchMatchHistoryListByName 失敗:', err.message);
+    return [];
+  }
+}
+
+// ✅ 抓取單場戰績詳細資料
 async function fetchMatchDetail(matchId) {
   const url = `${BASE_URL}/FightHistory/Detail?matchId=${encodeURIComponent(matchId)}`;
   try {
-    const response = await axios.get(url, { headers });
-    const $ = cheerio.load(response.data);
+    const res = await axios.get(url, { headers });
+    const $ = cheerio.load(res.data);
 
     const teammates = [];
     const opponents = [];
 
-    $('#blueTeam tbody tr').each((i, elem) => {
+    $('#blueTeam tbody tr').each((_, elem) => {
       const name = $(elem).find('strong').text().trim();
       const kda = $(elem).find('td').eq(2).text().trim();
       teammates.push(`${name} (${kda})`);
     });
 
-    $('#redTeam tbody tr').each((i, elem) => {
+    $('#redTeam tbody tr').each((_, elem) => {
       const name = $(elem).find('strong').text().trim();
       const kda = $(elem).find('td').eq(2).text().trim();
       opponents.push(`${name} (${kda})`);
     });
 
+    // 解析 B50 測試欄位（排位分、信譽分、系統判定等）
     const stats = {};
-    $('td').each((i, el) => {
+    $('td').each((_, el) => {
       const text = $(el).text().trim();
       if (
         text.includes('排位分') ||
         text.includes('信譽分') ||
-        text.includes('系統判定')
+        text.includes('系統判定') ||
+        text.includes('分路')
       ) {
         const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
         for (const line of lines) {
@@ -93,7 +130,7 @@ async function fetchMatchDetail(matchId) {
     const heroIdMatch = heroImg.match(/HeroHeadPath\/(\d+)head\.jpg/);
     const heroId = heroIdMatch ? heroIdMatch[1] : null;
 
-    const rank = $('td')
+    const rankText = $('td')
       .filter((_, el) => $(el).text().includes('('))
       .first()
       .text()
@@ -105,7 +142,7 @@ async function fetchMatchDetail(matchId) {
       teammates,
       opponents,
       stats,
-      rank,
+      rank: rankText,
     };
   } catch (err) {
     console.error('❌ fetchMatchDetail 失敗:', err.message);
