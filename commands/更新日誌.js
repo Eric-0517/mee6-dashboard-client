@@ -10,11 +10,8 @@ module.exports = {
       .setTitle('📒 更新日誌')
       .setColor(0x00bfff)
       .setDescription([
-        '※ 5/28 機器人誕生！',
-        '※ 5/29 逐步新增機器人指令及功能！',
-        '※ 5/30 機器人排除 Bug 中！',
-        '※ 6/05 暫時關閉機器人進行維護！',
-        '※ 6/22 新增小遊戲共計14個！'
+        '※ 至以下連結查看',
+        '※ https://www.laborbot.dpdns.org/資源/更新日誌'
       ].join('\n'))
       .setFooter({ text: '最後更新時間：6/22' })
       .setTimestamp();

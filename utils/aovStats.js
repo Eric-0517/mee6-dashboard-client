@@ -8,13 +8,12 @@ const headers = {
   'Accept-Language': 'zh-TW'
 };
 
-// ✅ UID + Server 查歷史戰績列表
+// ✅ 取得歷史戰績列表（透過 UID + serverId）
 async function fetchMatchHistoryListByUID(uid, serverId) {
   const url = `${BASE_URL}/FightHistory/View?searchType=UID&keyword=${uid}&dwLogicWorldId=${serverId}`;
   try {
     const res = await axios.get(url, { headers });
     const $ = cheerio.load(res.data);
-
     const matchList = [];
 
     $('.match-entry').each((i, el) => {
@@ -35,7 +34,7 @@ async function fetchMatchHistoryListByUID(uid, serverId) {
   }
 }
 
-// ✅ 單場戰績詳細資料
+// ✅ 抓取單場戰績詳細資料
 async function fetchMatchDetail(matchId) {
   const url = `${BASE_URL}/FightHistory/Detail?matchId=${encodeURIComponent(matchId)}`;
   try {
@@ -60,7 +59,11 @@ async function fetchMatchDetail(matchId) {
     const stats = {};
     $('td').each((i, el) => {
       const text = $(el).text().trim();
-      if (text.includes('排位分') || text.includes('信譽分') || text.includes('系統判定')) {
+      if (
+        text.includes('排位分') ||
+        text.includes('信譽分') ||
+        text.includes('系統判定')
+      ) {
         const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
         for (const line of lines) {
           const [key, value] = line.split('：');
