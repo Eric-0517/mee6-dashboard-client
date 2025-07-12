@@ -1,103 +1,98 @@
-const {
-  SlashCommandBuilder,
-  EmbedBuilder,
-  ActionRowBuilder,
-  StringSelectMenuBuilder,
-  ComponentType,
-} = require('discord.js');
-const {
-  fetchMatchHistoryListByName,
-  fetchMatchDetail,
-} = require('../utils/aovStats');
-
-const matchCache = new Map(); // 儲存場次快取給互動選單用
+const { SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
+const { fetchMatchHistoryListByName, fetchMatchDetail } = require('../utils/aovStats');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('查詢歷史戰績')
-    .setDescription('輸入玩家名稱查詢傳說對決歷史戰績')
+    .setDescription('透過玩家名稱查詢傳說對決歷史戰績')
     .addStringOption(option =>
-      option
-        .setName('玩家名稱')
-        .setDescription('請輸入玩家的遊戲名稱')
-        .setRequired(true)
-    ),
+      option.setName('playername')
+        .setDescription('玩家名稱')
+        .setRequired(true)),
 
   async execute(interaction) {
-    const playerName = interaction.options.getString('玩家名稱');
-    await interaction.deferReply(); // 延遲回應，避免逾時
+    const playerName = interaction.options.getString('playername');
 
-    try {
-      const matchList = await fetchMatchHistoryListByName(playerName);
-      if (!matchList || matchList.length === 0) {
-        return await interaction.editReply(`❌ 找不到玩家 **${playerName}** 的對戰資料。`);
-      }
+    await interaction.deferReply();
 
-      matchCache.set(interaction.user.id, { matchList });
-
-      const first = await fetchMatchDetail(matchList[0].id);
-      const embed = createMatchEmbed(first, matchList[0], 1, matchList.length);
-
-      const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('select_match')
-        .setPlaceholder('請選擇要查看的場次')
-        .addOptions(
-          matchList.map((m, i) => ({
-            label: `第 ${i + 1} 場 - ${m.heroName || '未知英雄'}`,
-            description: `${m.result} | ${m.kda} | ${m.mode}`,
-            value: `${i}`,
-          }))
-        );
-
-      const row = new ActionRowBuilder().addComponents(selectMenu);
-
-      await interaction.editReply({
-        content: `🎮 玩家 **${playerName}** 的最近對戰紀錄：`,
-        embeds: [embed],
-        components: [row],
-      });
-    } catch (err) {
-      console.error('❌ 查詢歷史戰績錯誤:', err);
-      if (!interaction.replied && !interaction.deferred) {
-        await interaction.reply({ content: '❌ 發生錯誤，請稍後再試。', ephemeral: true });
-      } else {
-        await interaction.followUp({ content: '❌ 發生錯誤，請稍後再試。', ephemeral: true });
-      }
+    // 取得戰績列表（多場）
+    const matchList = await fetchMatchHistoryListByName(playerName);
+    if (!matchList || matchList.length === 0) {
+      await interaction.editReply('❌ 查無戰績資料，請確認玩家名稱是否正確。');
+      return;
     }
+
+    // 預設顯示第一場詳細資料
+    let currentIndex = 0;
+    let matchDetail = await fetchMatchDetail(matchList[currentIndex].id);
+    if (!matchDetail) {
+      await interaction.editReply('❌ 無法取得該場戰績詳細資料。');
+      return;
+    }
+
+    // 建立輸出字串函式
+    function buildMatchDescription(detail) {
+      let desc = `**對局時間：** ${detail.matchTime}\n\n`;
+      desc += detail.players.map((p) => {
+        const icon = p.teamColor === 'blue' ? '🟦' : '🟥';
+        const heroIcon = p.heroId ? `:HeroIcon_${p.heroId}:` : '';
+        const equips = p.equips.length > 0 ? p.equips.join(' ') : '無裝備資料';
+        return `${icon} ${heroIcon} Lv.${p.level}\n玩家: ${p.name}\nUID: ${p.uid} (${p.server || '未知'}) | ${p.vip}\n` +
+          `KDA: ${p.kda} | 評分: ${p.score} (${p.rank})\n裝備: ${equips}\n` +
+          `輸出|承傷|經濟: ${p.output} | ${p.damageTaken} | ${p.economy}\n` +
+          `補兵: ${p.cs} | 硬控場: ${p.hardControl} | 治療量: ${p.heal} | 塔傷: ${p.towerDamage}\n`;
+      }).join('\n');
+
+      if (detail.reportedPlayers && detail.reportedPlayers.length > 0) {
+        desc += `\n[test]該玩家舉報的玩家：\n${detail.reportedPlayers.join('\n')}\n`;
+      }
+
+      return desc;
+    }
+
+    // 建立下拉選單給用戶選擇不同場次
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId('select_match')
+      .setPlaceholder('選擇場次')
+      .addOptions(
+        matchList.map((match, index) => ({
+          label: `第${index + 1} 場 - ID: ${match.id}`,
+          description: `英雄ID: ${match.heroId || '未知'}`,
+          value: index.toString(),
+        }))
+      );
+
+    const row = new ActionRowBuilder().addComponents(selectMenu);
+
+    // 先回覆第一場戰績
+    await interaction.editReply({
+      content: buildMatchDescription(matchDetail),
+      components: [row],
+    });
+
+    // 監聽選單互動
+    const filter = i => i.customId === 'select_match' && i.user.id === interaction.user.id;
+    const collector = interaction.channel.createMessageComponentCollector({ filter, time: 60000 });
+
+    collector.on('collect', async i => {
+      const idx = parseInt(i.values[0], 10);
+      if (idx === currentIndex) {
+        await i.update({ content: buildMatchDescription(matchDetail), components: [row] });
+        return;
+      }
+      currentIndex = idx;
+      matchDetail = await fetchMatchDetail(matchList[currentIndex].id);
+      if (!matchDetail) {
+        await i.update({ content: '❌ 無法取得該場戰績詳細資料。', components: [] });
+        return;
+      }
+      await i.update({ content: buildMatchDescription(matchDetail), components: [row] });
+    });
+
+    collector.on('end', async () => {
+      try {
+        await interaction.editReply({ components: [] }); // 超時取消選單
+      } catch { }
+    });
   },
 };
-
-// 🔧 建立嵌入訊息格式
-function createMatchEmbed(detail, summary, index, total) {
-  const heroIcon = detail.heroId
-    ? `https://dl.ops.kgtw.garenanow.com/CHT/HeroHeadPath/${detail.heroId}head.jpg`
-    : null;
-
-  const embed = new EmbedBuilder()
-    .setTitle(`第 ${index} 場戰績 - ${summary.heroName || '未知英雄'}`)
-    .setDescription(`🏆 結果：**${summary.result}**\n🎮 模式：${summary.mode}\n🕒 時間：${summary.time}\n📊 KDA：${summary.kda}`)
-    .addFields(
-      {
-        name: '🔵 我方隊友',
-        value: detail.teammates.join('\n') || '無資料',
-        inline: true,
-      },
-      {
-        name: '🔴 敵方隊伍',
-        value: detail.opponents.join('\n') || '無資料',
-        inline: true,
-      },
-      {
-        name: '📈 B50 測試欄位',
-        value:
-          Object.entries(detail.stats)
-            .map(([k, v]) => `${k}：${v}`)
-            .join('\n') || '無',
-      }
-    )
-    .setFooter({ text: `第 ${index} / ${total} 場戰績` })
-    .setColor(0x4ba3f1);
-
-  if (heroIcon) embed.setThumbnail(heroIcon);
-  return embed;
-}

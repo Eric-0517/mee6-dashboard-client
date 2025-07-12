@@ -1,140 +1,105 @@
-const {
-  SlashCommandBuilder,
-  ActionRowBuilder,
-  StringSelectMenuBuilder,
-  ComponentType,
-  EmbedBuilder
-} = require('discord.js');
-
-const {
-  fetchMatchHistoryListByUID,
-  fetchMatchDetail
-} = require('../utils/aovStats');
-
-function createMatchEmbed(uid, serverId, index, total, match) {
-  const teammates = Array.isArray(match.teammates) ? match.teammates.join('\n') : '無隊友資料';
-  const opponents = Array.isArray(match.opponents) ? match.opponents.join('\n') : '無敵隊資料';
-  const stats = match.stats && typeof match.stats === 'object'
-    ? Object.entries(match.stats).map(([k, v]) => `${k}: ${v}`).join('\n')
-    : '無詳細數據';
-
-  const heroHeadUrl = match.heroId
-    ? `https://dl.ops.kgtw.garenanow.com/CHT/HeroHeadPath/${match.heroId}head.jpg`
-    : null;
-
-  const serverName = serverId === 1011 ? '聖騎之王（1服）' :
-                     serverId === 1012 ? '純潔之翼（2服）' : `伺服器 ${serverId}`;
-
-  const embed = new EmbedBuilder()
-    .setTitle(`🎮 UID ${uid} 的歷史戰績`)
-    .setDescription(`📌 第 ${index}/${total} 場｜對局 ID：${match.id || '無'}\n🌐 伺服器：${serverName}`)
-    .addFields(
-      { name: '🏅 評分（名次）', value: match.rank || '無', inline: true },
-      { name: '👥 隊友', value: teammates, inline: false },
-      { name: '⚔️ 敵隊', value: opponents, inline: false },
-      { name: '📊 詳細數據（含 B50 測試欄位）', value: stats, inline: false }
-    )
-    .setColor('#29ABE2')
-    .setTimestamp();
-
-  if (heroHeadUrl) embed.setThumbnail(heroHeadUrl);
-
-  return embed;
-}
+const { SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
+const { fetchMatchHistoryListByUID, fetchMatchDetail } = require('../utils/aovStats');
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('查詢歷史戰績_uid')
-    .setDescription('輸入 UID 和伺服器 ID 查詢歷史戰績（可互動切換場次）')
-    .addStringOption(opt =>
-      opt.setName('uid')
-        .setDescription('玩家 UID')
-        .setRequired(true)
-    )
-    .addIntegerOption(opt =>
-      opt.setName('serverid')
-        .setDescription('伺服器 ID（1011=聖騎之王，1012=純潔之翼）')
-        .setRequired(true)
-    ),
+    .setDescription('透過 UID 查詢傳說對決歷史戰績')
+    .addStringOption(option =>
+      option.setName('uid')
+        .setDescription('玩家UID')
+        .setRequired(true))
+    .addStringOption(option =>
+      option.setName('server')
+        .setDescription('伺服器ID (1011 聖騎之王 / 1012 純潔之翼)')
+        .setRequired(true)),
 
   async execute(interaction) {
     const uid = interaction.options.getString('uid');
-    const serverId = interaction.options.getInteger('serverid');
+    const serverId = interaction.options.getString('server');
 
     await interaction.deferReply();
 
-    try {
-      const historyList = await fetchMatchHistoryListByUID(uid, serverId);
-
-      if (!historyList || historyList.length === 0) {
-        return await interaction.editReply(`❌ 查無 UID ${uid} 的歷史戰績資料`);
-      }
-
-      const options = historyList.map((match, i) => ({
-        label: `第${i + 1}場`,
-        description: `對局ID: ${match.id}`,
-        value: `${i}|${match.id}|${match.heroId || 'unknown'}`
-      }));
-
-      const firstMatchDetail = await fetchMatchDetail(historyList[0].id);
-
-      if (!firstMatchDetail) {
-        return await interaction.editReply('❌ 無法取得第一場詳細戰績');
-      }
-
-      const embed = createMatchEmbed(uid, serverId, 1, historyList.length, firstMatchDetail);
-
-      const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('matchSelect')
-        .setPlaceholder('🔍 選擇要查看的場次')
-        .addOptions(options);
-
-      const row = new ActionRowBuilder().addComponents(selectMenu);
-
-      const replyMsg = await interaction.editReply({ embeds: [embed], components: [row] });
-
-      const filter = i => i.user.id === interaction.user.id && i.customId === 'matchSelect';
-
-      const collector = replyMsg.createMessageComponentCollector({
-        filter,
-        componentType: ComponentType.StringSelect,
-        time: 60000
-      });
-
-      collector.on('collect', async i => {
-        const [indexStr, matchID] = i.values[0].split('|');
-        const index = parseInt(indexStr, 10);
-
-        await i.deferUpdate();
-
-        try {
-          const matchDetail = await fetchMatchDetail(matchID);
-          if (!matchDetail) {
-            return i.editReply({ content: '❌ 取得該場戰績失敗', embeds: [], components: [] });
-          }
-
-          const newEmbed = createMatchEmbed(uid, serverId, index + 1, historyList.length, matchDetail);
-          await i.editReply({ embeds: [newEmbed], components: [row] });
-        } catch (err) {
-          console.error('選單互動錯誤:', err);
-          try {
-            await i.editReply({ content: '❌ 發生錯誤，請稍後再試', components: [] });
-          } catch {}
-        }
-      });
-
-      collector.on('end', async () => {
-        try {
-          const disabledRow = new ActionRowBuilder().addComponents(selectMenu.setDisabled(true));
-          await interaction.editReply({ components: [disabledRow] });
-        } catch {}
-      });
-
-    } catch (err) {
-      console.error('❌ 查詢歷史戰績失敗:', err);
-      try {
-        await interaction.editReply(`❌ 發生錯誤：${err.message}`);
-      } catch {}
+    // 取得戰績列表（多場）
+    const matchList = await fetchMatchHistoryListByUID(uid, serverId);
+    if (!matchList || matchList.length === 0) {
+      await interaction.editReply('❌ 查無戰績資料，請確認 UID 與伺服器是否正確。');
+      return;
     }
-  }
+
+    // 預設顯示第一場詳細資料
+    let currentIndex = 0;
+    let matchDetail = await fetchMatchDetail(matchList[currentIndex].id);
+    if (!matchDetail) {
+      await interaction.editReply('❌ 無法取得該場戰績詳細資料。');
+      return;
+    }
+
+    // 建立輸出字串函式
+    function buildMatchDescription(detail) {
+      let desc = `**對局時間：** ${detail.matchTime}\n\n`;
+      desc += detail.players.map((p, i) => {
+        const icon = p.teamColor === 'blue' ? '🟦' : '🟥';
+        const heroIcon = p.heroId ? `:HeroIcon_${p.heroId}:` : '';
+        const equips = p.equips.length > 0 ? p.equips.join(' ') : '無裝備資料';
+        return `${icon} ${heroIcon} Lv.${p.level}\n玩家: ${p.name}\nUID: ${p.uid} (${p.server || '未知'}) | ${p.vip}\n` +
+          `KDA: ${p.kda} | 評分: ${p.score} (${p.rank})\n裝備: ${equips}\n` +
+          `輸出|承傷|經濟: ${p.output} | ${p.damageTaken} | ${p.economy}\n` +
+          `補兵: ${p.cs} | 硬控場: ${p.hardControl} | 治療量: ${p.heal} | 塔傷: ${p.towerDamage}\n`;
+      }).join('\n');
+
+      if (detail.reportedPlayers && detail.reportedPlayers.length > 0) {
+        desc += `\n[test]該玩家舉報的玩家：\n${detail.reportedPlayers.join('\n')}\n`;
+      }
+
+      return desc;
+    }
+
+    // 建立下拉選單給用戶選擇不同場次
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId('select_match')
+      .setPlaceholder('選擇場次')
+      .addOptions(
+        matchList.map((match, index) => ({
+          label: `第${index + 1} 場 - ID: ${match.id}`,
+          description: `英雄ID: ${match.heroId || '未知'}`,
+          value: index.toString(),
+        }))
+      );
+
+    const row = new ActionRowBuilder().addComponents(selectMenu);
+
+    // 先回覆第一場戰績
+    await interaction.editReply({
+      content: buildMatchDescription(matchDetail),
+      components: [row],
+    });
+
+    // 設置收集器監聽用戶選擇（可放在事件檔統一處理，以下示範寫法）
+    // 這裡示範用 interaction.client 的 collector 方式，請根據你的 Bot 框架調整
+
+    const filter = i => i.customId === 'select_match' && i.user.id === interaction.user.id;
+    const collector = interaction.channel.createMessageComponentCollector({ filter, time: 60000 });
+
+    collector.on('collect', async i => {
+      const idx = parseInt(i.values[0], 10);
+      if (idx === currentIndex) {
+        await i.update({ content: buildMatchDescription(matchDetail), components: [row] });
+        return;
+      }
+      currentIndex = idx;
+      matchDetail = await fetchMatchDetail(matchList[currentIndex].id);
+      if (!matchDetail) {
+        await i.update({ content: '❌ 無法取得該場戰績詳細資料。', components: [] });
+        return;
+      }
+      await i.update({ content: buildMatchDescription(matchDetail), components: [row] });
+    });
+
+    collector.on('end', async () => {
+      try {
+        await interaction.editReply({ components: [] }); // 超時取消選單
+      } catch { }
+    });
+  },
 };
