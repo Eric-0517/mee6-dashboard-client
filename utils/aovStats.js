@@ -8,6 +8,67 @@ const headers = {
 };
 
 /**
+ * 抓取玩家名稱查詢的歷史戰績列表
+ * @param {string} playerName 玩家名稱
+ * @returns {Promise<Array<{id:string,heroId:string|null}>>} 戰績列表
+ */
+async function fetchMatchHistoryListByName(playerName) {
+  try {
+    const url = `${BASE_URL}/FightHistory/View?searchType=playerName&keyword=${encodeURIComponent(playerName)}`;
+    const res = await axios.get(url, { headers });
+    const $ = cheerio.load(res.data);
+    const matchList = [];
+
+    $('.match-entry').each((i, el) => {
+      const id = $(el).find('.match-id').text().trim();
+      const heroImg = $(el).find('img').attr('src') || '';
+      const heroIdMatch = heroImg.match(/HeroHeadPath\/(\d+)head\.jpg/);
+      const heroId = heroIdMatch ? heroIdMatch[1] : null;
+
+      if (id) {
+        matchList.push({ id, heroId });
+      }
+    });
+
+    return matchList;
+  } catch (err) {
+    console.error('❌ fetchMatchHistoryListByName 失敗:', err.message);
+    return [];
+  }
+}
+
+/**
+ * 抓取 UID + 伺服器ID 查詢的歷史戰績列表
+ * @param {string} uid 玩家 UID
+ * @param {string|number} serverId 伺服器 ID（如 1011、1012）
+ * @returns {Promise<Array<{id:string,heroId:string|null}>>} 戰績列表
+ */
+async function fetchMatchHistoryListByUID(uid, serverId) {
+  try {
+    const url = `${BASE_URL}/FightHistory/View?searchType=UID&keyword=${encodeURIComponent(uid)}&dwLogicWorldId=${serverId}`;
+    const res = await axios.get(url, { headers });
+    const $ = cheerio.load(res.data);
+    const matchList = [];
+
+    $('.match-entry').each((i, el) => {
+      const id = $(el).find('.match-id').text().trim();
+      const heroImg = $(el).find('img').attr('src') || '';
+      const heroIdMatch = heroImg.match(/HeroHeadPath\/(\d+)head\.jpg/);
+      const heroId = heroIdMatch ? heroIdMatch[1] : null;
+
+      if (id) {
+        matchList.push({ id, heroId });
+      }
+    });
+
+    return matchList;
+  } catch (err) {
+    console.error('❌ fetchMatchHistoryListByUID 失敗:', err.message);
+    return [];
+  }
+}
+
+/**
  * 抓取單場戰績詳細資料，包含10人完整資訊與舉報與對局時間
  * @param {string} matchId 對局ID
  * @returns {Promise<object|null>} 戰績詳細資料或null
@@ -126,5 +187,7 @@ async function fetchMatchDetail(matchId) {
 }
 
 module.exports = {
+  fetchMatchHistoryListByName,
+  fetchMatchHistoryListByUID,
   fetchMatchDetail,
 };
