@@ -1,20 +1,32 @@
-const GuildConfig = require("../models/GuildConfig");
+const { EmbedBuilder } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
+const configPath = path.resolve(__dirname, '../data/welcomeConfig.json');
 
 module.exports = {
-  name: "guildMemberAdd",
+  name: 'guildMemberAdd',
   async execute(member) {
-    const config = await GuildConfig.findOne({ guildId: member.guild.id });
-    if (!config) return;
+    const guildId = member.guild.id;
 
-    const welcomeChannel = member.guild.channels.cache.get(config.welcomeChannelId);
-    const defaultRole = member.guild.roles.cache.get(config.defaultRoleId);
+    // 若設定檔不存在或未設定頻道
+    if (!fs.existsSync(configPath)) return;
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const channelId = config[guildId];
+    if (!channelId) return;
 
-    if (welcomeChannel) {
-      welcomeChannel.send(`🎉 歡迎 <@${member.id}> 加入伺服器！`);
-    }
+    const channel = await member.guild.channels.fetch(channelId).catch(() => null);
+    if (!channel) return;
 
-    if (defaultRole) {
-      member.roles.add(defaultRole).catch(console.error);
-    }
-  },
+    const avatarUrl = member.user.displayAvatarURL({ format: 'png', size: 512 });
+
+    const embed = new EmbedBuilder()
+      .setColor('#00FFFF')
+      .setTitle('🎉 Welcome to the Server!')
+      .setDescription(`${member} 歡迎加入我們的伺服器！`)
+      .setImage(avatarUrl)
+      .setTimestamp()
+      .setFooter({ text: `用戶 ID：${member.id}` });
+
+    await channel.send({ embeds: [embed] });
+  }
 };
