@@ -8,9 +8,7 @@ const headers = {
 };
 
 /**
- * 抓取玩家名稱查詢的歷史戰績列表
- * @param {string} playerName 玩家名稱
- * @returns {Promise<Array<{id:string,heroId:string|null}>>}
+ * 透過玩家名稱查詢歷史戰績列表
  */
 async function fetchMatchHistoryListByName(playerName) {
   try {
@@ -24,7 +22,6 @@ async function fetchMatchHistoryListByName(playerName) {
       const heroImg = $(el).find('img').attr('src') || '';
       const heroIdMatch = heroImg.match(/HeroHeadPath\/(\d+)head\.jpg/);
       const heroId = heroIdMatch ? heroIdMatch[1] : null;
-
       if (id) matchList.push({ id, heroId });
     });
 
@@ -36,10 +33,7 @@ async function fetchMatchHistoryListByName(playerName) {
 }
 
 /**
- * 抓取 UID + 伺服器ID 查詢的歷史戰績列表
- * @param {string} uid 玩家 UID
- * @param {string|number} serverId 伺服器 ID（如 1011、1012）
- * @returns {Promise<Array<{id:string,heroId:string|null}>>}
+ * 透過 UID + 伺服器ID 查詢歷史戰績列表
  */
 async function fetchMatchHistoryListByUID(uid, serverId) {
   try {
@@ -53,7 +47,6 @@ async function fetchMatchHistoryListByUID(uid, serverId) {
       const heroImg = $(el).find('img').attr('src') || '';
       const heroIdMatch = heroImg.match(/HeroHeadPath\/(\d+)head\.jpg/);
       const heroId = heroIdMatch ? heroIdMatch[1] : null;
-
       if (id) matchList.push({ id, heroId });
     });
 
@@ -65,13 +58,11 @@ async function fetchMatchHistoryListByUID(uid, serverId) {
 }
 
 /**
- * 抓取單場戰績詳細資料，包含10人完整資訊與舉報與對局時間
- * @param {string} matchId 對局 ID
- * @returns {Promise<object|null>}
+ * 查詢詳細戰報，包含10人完整資訊與對局細節
  */
 async function fetchMatchDetail(matchId) {
-  const url = `${BASE_URL}/FightHistory/Detail?matchId=${encodeURIComponent(matchId)}`;
   try {
+    const url = `${BASE_URL}/FightHistory/Detail?matchId=${encodeURIComponent(matchId)}`;
     const res = await axios.get(url, { headers });
     const $ = cheerio.load(res.data);
 
@@ -85,12 +76,9 @@ async function fetchMatchDetail(matchId) {
     const blueWin = $('.blueTeam').hasClass('blue-win');
     const redWin = $('.redTeam').hasClass('red-win');
 
-    const blueRows = $('#blueTeam tbody tr');
-    const redRows = $('#redTeam tbody tr');
-
     const players = [];
 
-    function parsePlayerRow(_, el, teamColor) {
+    function parseRow(_, el, teamColor) {
       const row = $(el);
       const heroImg = row.find('img').attr('src') || '';
       const heroIdMatch = heroImg.match(/HeroHeadPath\/(\d+)head\.jpg/);
@@ -101,14 +89,9 @@ async function fetchMatchDetail(matchId) {
       const uidMatch = uidText.match(/\d+/);
       const uid = uidMatch ? uidMatch[0] : '未知UID';
 
-      let server = '', vip = 'VIP 0';
       const svText = row.find('td.server-vip').text().trim();
-      if (svText) {
-        const sMatch = svText.match(/\(([^)]+)\)/);
-        server = sMatch ? sMatch[1] : '';
-        const vMatch = svText.match(/VIP\s*(\d+)/);
-        vip = vMatch ? `VIP ${vMatch[1]}` : 'VIP 0';
-      }
+      const server = svText.match(/\(([^)]+)\)/)?.[1] || '';
+      const vip = svText.match(/VIP\s*(\d+)/)?.[0] || 'VIP 0';
 
       const level = row.find('td.level').text().trim() || '0';
       const kda = row.find('td.kda').text().trim() || '0/0/0';
@@ -121,8 +104,8 @@ async function fetchMatchDetail(matchId) {
         if (alt) equips.push(`:${alt}:`);
       });
 
-      const output = row.find('td.output').text().trim() || '0 (0%)';
-      const damageTaken = row.find('td.damageTaken').text().trim() || '0 (0%)';
+      const output = row.find('td.output').text().trim() || '0';
+      const damageTaken = row.find('td.damageTaken').text().trim() || '0';
       const economy = row.find('td.economy').text().trim() || '0';
 
       const cs = row.find('td.cs').text().trim() || '0';
@@ -133,37 +116,15 @@ async function fetchMatchDetail(matchId) {
       const result = (teamColor === 'blue' && blueWin) || (teamColor === 'red' && redWin) ? '勝' : '負';
 
       players.push({
-        teamColor,
-        heroId,
-        name,
-        uid,
-        server,
-        vip,
-        level,
-        kda,
-        score,
-        rank,
-        equips,
-        output,
-        damageTaken,
-        economy,
-        cs,
-        hardControl,
-        heal,
-        towerDamage,
-        result,
+        teamColor, heroId, name, uid, server, vip, level, kda, score, rank,
+        equips, output, damageTaken, economy, cs, hardControl, heal, towerDamage, result,
       });
     }
 
-    blueRows.each((i, el) => parsePlayerRow(i, el, 'blue'));
-    redRows.each((i, el) => parsePlayerRow(i, el, 'red'));
+    $('#blueTeam tbody tr').each((i, el) => parseRow(i, el, 'blue'));
+    $('#redTeam tbody tr').each((i, el) => parseRow(i, el, 'red'));
 
-    return {
-      matchId,
-      matchTime,
-      players,
-      reportedPlayers,
-    };
+    return { matchId, matchTime, players, reportedPlayers };
   } catch (err) {
     console.error('❌ fetchMatchDetail 失敗:', err.message);
     return null;
