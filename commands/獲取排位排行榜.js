@@ -1,56 +1,74 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const axios = require('axios');
+const { SlashCommandBuilder, ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder } = require('discord.js');
+const { getLeaderboard } = require('../utils/aovStats'); // 使用整合好的新 API
+
+const PAGE_SIZE = 50;
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName('獲取排位排行榜')
-    .setDescription('查詢傳說對決排位排行榜（前 50 名）')
-    .addStringOption(option =>
-      option.setName('server')
+    .setName('查詢排行榜')
+    .setDescription('查詢排位排行榜')
+    .addIntegerOption(option =>
+      option.setName('伺服器')
         .setDescription('選擇伺服器')
         .setRequired(true)
         .addChoices(
-          { name: '聖騎之王（1服）', value: '1' },
-          { name: '純潔之翼（2服）', value: '2' }
+          { name: '聖騎之王（1服）', value: 1011 },
+          { name: '純潔之翼（2服）', value: 1012 }
         )
     ),
-
   async execute(interaction) {
-    const server = interaction.options.getString('server');
-    const serverName = server === '1' ? '聖騎之王' : '純潔之翼';
-    const page = 1;
+    const serverId = interaction.options.getInteger('伺服器');
+    const players = await getLeaderboard(serverId);
 
-    await interaction.deferReply();
-
-    try {
-      const url = `https://aovweb.azurewebsites.net/Ranking/TOPRankPlayerList?page=${page}&server=${server}`;
-      const res = await axios.get(url);
-      const playerList = res.data?.data?.list;
-
-      if (!playerList || playerList.length === 0) {
-        return await interaction.editReply(`❌ 查無 ${serverName} 的排行榜資料。`);
-      }
-
-      const embed = new EmbedBuilder()
-        .setTitle(`🏆 ${serverName} 排位排行榜 - 第 ${page} 頁`)
-        .setColor(0xFFD700)
-        .setTimestamp();
-
-      // 限制最多 25 名（Embed 最多可顯示 25 欄位）
-      const topPlayers = playerList.slice(0, 25);
-
-      topPlayers.forEach((player, index) => {
-        embed.addFields({
-          name: `#${player.rank} - ${player.name}`,
-          value: `🎯 排位分：${player.score}｜${player.rank || '未知'}｜擅長英雄：${player.mainHero || '無'}`,
-          inline: false
-        });
-      });
-
-      await interaction.editReply({ embeds: [embed] });
-    } catch (err) {
-      console.error('❌ 擷取排行榜錯誤：', err);
-      await interaction.editReply('❌ 查詢失敗，請稍後再試。');
+    if (!players || players.length === 0) {
+      return interaction.reply('❌ 查無排行榜資料');
     }
+
+    const totalPages = Math.ceil(players.length / PAGE_SIZE);
+
+    const getPageEmbed = (page) => {
+      const start = (page - 1) * PAGE_SIZE;
+      const pagePlayers = players.slice(start, start + PAGE_SIZE);
+      const description = pagePlayers.map((p, i) => {
+        return `**${start + i + 1}. ${p.name}**｜${p.rankName}｜${p.score}分`;
+      }).join('\n');
+
+      return new EmbedBuilder()
+        .setTitle(`傳說對決 排位排行榜｜伺服器 ${serverId === 1011 ? '聖騎之王' : '純潔之翼'}`)
+        .setDescription(description)
+        .setFooter({ text: `第 ${page} / ${totalPages} 頁` })
+        .setColor('#FFD700');
+    };
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId('rank_page_select')
+      .setPlaceholder('選擇頁數')
+      .addOptions([...Array(totalPages).keys()].map(i => ({
+        label: `第 ${i + 1} 頁`,
+        value: `${i + 1}`,
+      })));
+
+    await interaction.reply({
+      embeds: [getPageEmbed(1)],
+      components: [new ActionRowBuilder().addComponents(selectMenu)],
+      ephemeral: false
+    });
+
+    const collector = interaction.channel.createMessageComponentCollector({
+      time: 60_000,
+      filter: i => i.customId === 'rank_page_select' && i.user.id === interaction.user.id
+    });
+
+    collector.on('collect', async i => {
+      const page = parseInt(i.values[0]);
+      await i.update({
+        embeds: [getPageEmbed(page)],
+        components: [new ActionRowBuilder().addComponents(selectMenu)]
+      });
+    });
+
+    collector.on('end', () => {
+      interaction.editReply({ components: [] });
+    });
   }
 };
